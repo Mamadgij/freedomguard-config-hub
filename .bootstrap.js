@@ -77,7 +77,10 @@ function updateWranglerJsonc() {
 }
 
 function runSetupCommands() {
-    const commands = [];
+    const commands = [
+    "bun add react-qr-code@^2.0.15",
+    "bun add js-base64@^3.7.7"
+];
     
     if (commands.length === 0) {
         console.log('⊘ No setup commands to run');
