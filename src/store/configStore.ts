@@ -1,101 +1,83 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
-import { parseSubscription } from '@/lib/crypto-utils';
+import { safeBase64Decode, parseConfig } from '@/lib/crypto-utils';
 export type Status = 'IDLE' | 'SCANNING' | 'SUCCESS' | 'ERROR';
 export interface LogEntry {
   id: number;
   message: string;
   type: 'info' | 'success' | 'error';
 }
-export const SOURCES = [
-  { url: "https://raw.githubusercontent.com/voidr3aper-anon/GFW-slayer/main/configs/regional/iran/serverless-iran-friendly.json", name: "GFW-Slayer (Iran Optimized)" },
-  { url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity", name: "V2Ray Aggregator (Eternity)" },
-  { url: "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix", name: "TVC Mix" },
-  { url: "https://raw.githubusercontent.com/voidr3aper-anon/GFW-slayer/main/configs/general/serverless-v2ray.json", name: "GFW-Slayer (Global)" },
-];
 interface ConfigStoreState {
   status: Status;
   configs: string[];
   logs: LogEntry[];
   lastUpdated: Date | null;
-  enabledSources: string[];
-  isConnected: boolean;
-  currentConfig: string | null;
-  mockBytesTransferred: number;
   setStatus: (status: Status) => void;
   addLog: (message: string, type?: LogEntry['type']) => void;
   clearLogs: () => void;
   clearConfigs: () => void;
   fetchConfigs: () => Promise<void>;
-  toggleSource: (url: string) => void;
-  resetSources: () => void;
-  connectVPN: () => Promise<boolean>;
-  disconnectVPN: () => void;
-  incrementBytesTransferred: (bytes: number) => void;
 }
+const SUBSCRIPTION_URLS = [
+  "https://raw.githubusercontent.com/voidr3aper-anon/GFW-slayer/main/configs/regional/iran/serverless-iran-friendly.json",
+  "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity",
+  "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix",
+  "https://raw.githubusercontent.com/voidr3aper-anon/GFW-slayer/main/configs/general/serverless-v2ray.json",
+];
 export const useConfigStore = create<ConfigStoreState>()(
   persist(
-    immer((set, get) => ({
+    (set, get) => ({
       status: 'IDLE',
       configs: [],
       logs: [],
       lastUpdated: null,
-      enabledSources: SOURCES.map(s => s.url),
-      isConnected: false,
-      currentConfig: null,
-      mockBytesTransferred: 0,
       setStatus: (status) => set({ status }),
       addLog: (message, type = 'info') => {
-        set((state) => {
-          state.logs.push({ id: Date.now() + Math.random(), message, type });
-        });
+        set((state) => ({
+          logs: [...state.logs, { id: Date.now(), message, type }],
+        }));
       },
       clearLogs: () => set({ logs: [] }),
       clearConfigs: () => {
         get().addLog('Configuration cache cleared.', 'info');
         set({ configs: [], lastUpdated: null, status: 'IDLE' });
       },
-      toggleSource: (url: string) => {
-        set((state) => {
-          const isEnabled = state.enabledSources.includes(url);
-          if (isEnabled) {
-            state.enabledSources = state.enabledSources.filter(s => s !== url);
-          } else {
-            state.enabledSources.push(url);
-          }
-        });
-      },
-      resetSources: () => set({ enabledSources: SOURCES.map(s => s.url) }),
       fetchConfigs: async () => {
-        const { addLog, clearLogs, enabledSources } = get();
-        set({ status: 'SCANNING' });
+        const { setStatus, addLog, clearLogs } = get();
+        setStatus('SCANNING');
         clearLogs();
         addLog('Initializing FreedomGuard sequence...');
-        const activeSources = SOURCES.filter(s => enabledSources.includes(s.url));
-        if (activeSources.length === 0) {
-          addLog('No sources enabled. Please enable sources in Settings.', 'error');
-          set({ status: 'ERROR' });
-          return;
-        }
         let allConfigs: Set<string> = new Set();
-        for (const source of activeSources) {
+        for (const url of SUBSCRIPTION_URLS) {
           try {
-            addLog(`Pinging ${source.name}...`);
-            const response = await fetch(`/api/proxy?url=${encodeURIComponent(source.url)}`);
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const sourceName = new URL(url).hostname;
+            addLog(`Pinging source: ${sourceName}...`);
+            const response = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`);
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
             const content = await response.text();
-            addLog(`Response received from ${source.name}. Parsing...`, 'info');
-            const parsed = parseSubscription(content);
+            addLog(`Response received from ${sourceName}. Parsing...`, 'info');
+            let decodedContent = content;
+            // Attempt to detect if it's Base64 encoded
+            if (!content.includes('://') && content.length > 20) {
+                const decoded = safeBase64Decode(content);
+                if (decoded) {
+                    decodedContent = decoded;
+                    addLog('Base64 content detected and decoded.', 'info');
+                }
+            }
+            const parsed = parseConfig(decodedContent);
             if (parsed.length > 0) {
-              addLog(`Found ${parsed.length} configs from ${source.name}.`, 'success');
+              addLog(`Found ${parsed.length} configs from ${sourceName}.`, 'success');
               parsed.forEach(config => allConfigs.add(config));
             } else {
-              addLog(`No valid configs found in ${source.name}.`, 'info');
+              addLog(`No valid configs found in ${sourceName}.`, 'info');
             }
           } catch (error) {
-            addLog(`Failed to fetch from ${source.name}.`, 'error');
-            console.error(`Error fetching ${source.url}:`, error);
+            const sourceName = new URL(url).hostname;
+            addLog(`Failed to fetch from ${sourceName}.`, 'error');
+            console.error(`Error fetching ${url}:`, error);
           }
         }
         const uniqueConfigs = Array.from(allConfigs);
@@ -107,52 +89,13 @@ export const useConfigStore = create<ConfigStoreState>()(
           addLog('Scan failed. No configurations found. Check network or try again later.', 'error');
         }
       },
-      connectVPN: async () => {
-        const { status, fetchConfigs, addLog } = get();
-        if (status === 'SCANNING') return false;
-        await fetchConfigs();
-        const finalStatus = get().status;
-        const configs = get().configs;
-        if (finalStatus === 'SUCCESS' && configs.length > 0) {
-          set({
-            isConnected: true,
-            currentConfig: configs[0],
-            mockBytesTransferred: 0,
-            status: 'IDLE', // Reset status after connection
-          });
-          addLog('VPN Connected - All traffic routed, DNS secured', 'success');
-          addLog('DNS: iran-friendly.example.com', 'info');
-          return true;
-        } else {
-          // fetchConfigs already sets status to ERROR and logs it
-          return false;
-        }
-      },
-      disconnectVPN: () => {
-        get().addLog('VPN Disconnected', 'info');
-        set({
-          isConnected: false,
-          currentConfig: null,
-          mockBytesTransferred: 0,
-          status: 'IDLE',
-        });
-      },
-      incrementBytesTransferred: (bytes) => {
-        set(state => {
-          state.mockBytesTransferred += bytes;
-        });
-      },
-    })),
+    }),
     {
       name: 'freedom-guard-config-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         configs: state.configs,
         lastUpdated: state.lastUpdated,
-        enabledSources: state.enabledSources,
-        isConnected: state.isConnected,
-        currentConfig: state.currentConfig,
-        mockBytesTransferred: state.mockBytesTransferred,
       }),
     }
   )
