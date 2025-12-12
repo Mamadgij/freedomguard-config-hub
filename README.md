@@ -1,6 +1,6 @@
 # FreedomGuard Config Hub
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Mamadgij/freedomguard-config-hub)
 
 A resilient, sophisticated configuration aggregator for V2Ray/Xray clients, featuring a native-app-like interface for fetching and managing anti-censorship keys. FreedomGuard is a high-performance, resilient Progressive Web Application (PWA) designed to serve as a centralized hub for fetching, aggregating, and managing censorship-resistant VPN configurations (VLESS, VMESS, Trojan). Built specifically for users in restrictive network environments (like Iran), it mimics the user experience of a native VPN application while operating within the browser's capabilities.
 
@@ -87,7 +87,7 @@ bun run deploy
 
 This builds the frontend assets and deploys the Worker (including proxy routes).
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Mamadgij/freedomguard-config-hub)
 
 **Note**: Ensure you're logged in with `wrangler login` and have a Cloudflare account. The Worker handles `/api/*` routes automatically.
 
