@@ -4,7 +4,7 @@
  */
  {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "vite-reference",
+	"name": "freedom-guard-hub-u0s14pbo28oyyl6rb41uy",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-04-24",
 	"assets": {
