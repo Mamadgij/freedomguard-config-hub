@@ -79,7 +79,8 @@ function updateWranglerJsonc() {
 function runSetupCommands() {
     const commands = [
     "bun add react-qr-code@^2.0.15",
-    "bun add js-base64@^3.7.7"
+    "bun add js-base64@^3.7.7",
+    "bun install js-base64"
 ];
     
     if (commands.length === 0) {
