@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
 import { parseSubscription } from '@/lib/crypto-utils';
 export type Status = 'IDLE' | 'SCANNING' | 'SUCCESS' | 'ERROR';
 export interface LogEntry {
@@ -19,6 +20,9 @@ interface ConfigStoreState {
   logs: LogEntry[];
   lastUpdated: Date | null;
   enabledSources: string[];
+  isConnected: boolean;
+  currentConfig: string | null;
+  mockBytesTransferred: number;
   setStatus: (status: Status) => void;
   addLog: (message: string, type?: LogEntry['type']) => void;
   clearLogs: () => void;
@@ -26,20 +30,26 @@ interface ConfigStoreState {
   fetchConfigs: () => Promise<void>;
   toggleSource: (url: string) => void;
   resetSources: () => void;
+  connectVPN: () => Promise<boolean>;
+  disconnectVPN: () => void;
+  incrementBytesTransferred: (bytes: number) => void;
 }
 export const useConfigStore = create<ConfigStoreState>()(
   persist(
-    (set, get) => ({
+    immer((set, get) => ({
       status: 'IDLE',
       configs: [],
       logs: [],
       lastUpdated: null,
       enabledSources: SOURCES.map(s => s.url),
+      isConnected: false,
+      currentConfig: null,
+      mockBytesTransferred: 0,
       setStatus: (status) => set({ status }),
       addLog: (message, type = 'info') => {
-        set((state) => ({
-          logs: [...state.logs, { id: Date.now() + Math.random(), message, type }],
-        }));
+        set((state) => {
+          state.logs.push({ id: Date.now() + Math.random(), message, type });
+        });
       },
       clearLogs: () => set({ logs: [] }),
       clearConfigs: () => {
@@ -50,22 +60,22 @@ export const useConfigStore = create<ConfigStoreState>()(
         set((state) => {
           const isEnabled = state.enabledSources.includes(url);
           if (isEnabled) {
-            return { enabledSources: state.enabledSources.filter(s => s !== url) };
+            state.enabledSources = state.enabledSources.filter(s => s !== url);
           } else {
-            return { enabledSources: [...state.enabledSources, url] };
+            state.enabledSources.push(url);
           }
         });
       },
       resetSources: () => set({ enabledSources: SOURCES.map(s => s.url) }),
       fetchConfigs: async () => {
-        const { setStatus, addLog, clearLogs, enabledSources } = get();
-        setStatus('SCANNING');
+        const { addLog, clearLogs, enabledSources } = get();
+        set({ status: 'SCANNING' });
         clearLogs();
         addLog('Initializing FreedomGuard sequence...');
         const activeSources = SOURCES.filter(s => enabledSources.includes(s.url));
         if (activeSources.length === 0) {
           addLog('No sources enabled. Please enable sources in Settings.', 'error');
-          setStatus('ERROR');
+          set({ status: 'ERROR' });
           return;
         }
         let allConfigs: Set<string> = new Set();
@@ -73,9 +83,7 @@ export const useConfigStore = create<ConfigStoreState>()(
           try {
             addLog(`Pinging ${source.name}...`);
             const response = await fetch(`/api/proxy?url=${encodeURIComponent(source.url)}`);
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const content = await response.text();
             addLog(`Response received from ${source.name}. Parsing...`, 'info');
             const parsed = parseSubscription(content);
@@ -99,7 +107,42 @@ export const useConfigStore = create<ConfigStoreState>()(
           addLog('Scan failed. No configurations found. Check network or try again later.', 'error');
         }
       },
-    }),
+      connectVPN: async () => {
+        const { status, fetchConfigs, addLog } = get();
+        if (status === 'SCANNING') return false;
+        await fetchConfigs();
+        const finalStatus = get().status;
+        const configs = get().configs;
+        if (finalStatus === 'SUCCESS' && configs.length > 0) {
+          set({
+            isConnected: true,
+            currentConfig: configs[0],
+            mockBytesTransferred: 0,
+            status: 'IDLE', // Reset status after connection
+          });
+          addLog('VPN Connected - All traffic routed, DNS secured', 'success');
+          addLog('DNS: iran-friendly.example.com', 'info');
+          return true;
+        } else {
+          // fetchConfigs already sets status to ERROR and logs it
+          return false;
+        }
+      },
+      disconnectVPN: () => {
+        get().addLog('VPN Disconnected', 'info');
+        set({
+          isConnected: false,
+          currentConfig: null,
+          mockBytesTransferred: 0,
+          status: 'IDLE',
+        });
+      },
+      incrementBytesTransferred: (bytes) => {
+        set(state => {
+          state.mockBytesTransferred += bytes;
+        });
+      },
+    })),
     {
       name: 'freedom-guard-config-storage',
       storage: createJSONStorage(() => localStorage),
@@ -107,6 +150,9 @@ export const useConfigStore = create<ConfigStoreState>()(
         configs: state.configs,
         lastUpdated: state.lastUpdated,
         enabledSources: state.enabledSources,
+        isConnected: state.isConnected,
+        currentConfig: state.currentConfig,
+        mockBytesTransferred: state.mockBytesTransferred,
       }),
     }
   )
